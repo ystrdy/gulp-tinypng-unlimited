@@ -1,6 +1,6 @@
 {
   "name": "gulp-tinypng-unlimited",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Use tinypng to compress the gulp plugins of png and jpg.",
   "main": "index.js",
   "scripts": {
