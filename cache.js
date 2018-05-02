@@ -1,52 +1,40 @@
 const fs = require('fs-extra');
 const path = require('path');
 const md5Hex = require('md5-hex');
-const uniqueString = require('unique-string');
+const packageConfig = require('./package.json');
+const os = require('os');
 
 class Cache {
     constructor(options){
-        this.options = Object.assign({
-            filename: 'cache',
-        }, options);
-        this.cache = {};
-
-        this.init();
+        this.options = {
+            directory: path.join(os.tmpdir(), packageConfig.name + '-cache'),     // 缓存存放的目录            
+        };
+        this.setOptions(options);
     }
-    init(){
-        const options = this.options;
+    setOptions(options){
+        this.options = Object.assign({}, this.options, options || {});
         // 创建缓存存放目录
-        fs.ensureDirSync(options.directory);
-        // 读取缓存
-        try{
-            const filepath = path.join(options.directory, options.filename);
-            this.cache = fs.readJsonSync(filepath);
-        } catch(e){
-            this.cache = {};
-        }
+        fs.ensureDirSync(this.options.directory);
     }
     has(file){
-        return !!this.cache[md5Hex(file.contents)];
+        const filename = md5Hex(file.contents);
+        return fs.readdirSync(this.options.directory).indexOf(filename) !== -1;
     }
     get(file){
-        if (this.has(file)) {
-            const filepath = this.cache[md5Hex(file.contents)];
-            const copy = file.clone();
-            file.contents = fs.readFileSync(filepath, {encoding: null});
-            return copy;
+        const filename = md5Hex(file.contents);
+        const filepath = path.join(this.options.directory, filename);
+        const compressed = fs.readFileSync(filepath, {encoding: null});
+        if (compressed) {
+            file.contents = compressed;
         }
-        return null;
+        return file;
     }
-    set(file, copy){
-        const options = this.options;
+    set(file, compressed){
         // 缓存写入硬盘
-        const filepath = path.join(options.directory, uniqueString());
-        fs.outputFileSync(filepath, copy.contents, {encoding: null});
-        // 缓存
-        this.cache[md5Hex(file.contents)] = filepath;
-        // 缓存列表写入硬盘
-        const outputpath = path.join(options.directory, options.filename);
-        fs.outputJSONSync(outputpath, this.cache);
+        const filename = md5Hex(file.contents);
+        const filepath = path.join(this.options.directory, filename);
+        fs.outputFileSync(filepath, compressed.contents, {encoding: null});        
     }
 }
 
-module.exports = Cache;
+module.exports = new Cache();

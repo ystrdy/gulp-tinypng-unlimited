@@ -3,27 +3,29 @@ const PluginError = require('plugin-error');
 const log = require('fancy-log');
 const request = require('request');
 const download = require('download');
-const package = require('./package.json');
-const path = require('path');
+const packageConfig = require('./package.json');
 const chalk = require('chalk');
-const os = require('os');
-const Cache = require('./cache');
+const path = require('path');
+
+let cache;
 
 module.exports = function (opt) {
     const options = Object.assign({
-        cache: true,                    // 开启缓存
-        cachePath: path.join(os.tmpdir(), package.name + '-cache'), // 缓存存放的目录
-        filterRule: /\.(png|jpg|jpeg)$/i,   // 压缩的过滤规则
-        outputErrorFilePath: true,      // 是否输出错误文件的路径
-        outputErrorFiles: false,        // 是否依然将错误文件输出
+        cache: true,                        // 开启缓存
+        // cachePath: path.join(os.tmpdir(), packageConfig.name + '-cache'),                    // 缓存存放的目录
+        outputErrorLog: true,               // 打印错误日志
+        outputErrorFiles: false,            // 仍然将错误文件输出
     }, opt || {});
-    // 缓存
-    let cache;
+    // 启用缓存
     if (options.cache) {
-        cache = new Cache({
-            directory: options.cachePath,
-        });
+        cache = require('./cache');
+        // 自定义缓存
+        options.cachePath && cache.setOptions({ directory: options.cachePath });
     }
+    // 输出错误信息
+    const logError = function (msg) {
+        options.outputErrorLog && log.error(chalk.red(msg));
+    };
     // 读取广告缓存
     return through.obj(function (file, encode, callback){
         if (file.isNull()) {
@@ -31,41 +33,57 @@ module.exports = function (opt) {
         }
         if (file.isStream()) {
             return callback(new PluginError({
-                plugin: package.name,
+                plugin: packageConfig.name,
                 message: 'Streaming not supported',
             }));
         }
         if (file.isBuffer()) {
-            if (options.filterRule.test(file.path)) {   // 只压缩png和jpg文件
-                // 先从缓存中取
-                if (cache && cache.has(file)) {
-                    const copy = cache.get(file);
-                    return callback(null, copy);
-                }
-                // 压缩文件
-                compress(file, function(error, copy) {
+            if (/\.(png|jpg|jpeg)$/i.test(file.path)) {   // 只压缩png和jpg文件
+                // 提取文件
+                extract(file, function (error, result) {
                     if (error) {
-                        if (options.outputErrorFilePath) {
-                            log.error(chalk.red(file.path + ' ' + error.message));
-                        }
-                        if (options.outputErrorFiles) {
-                            callback(null, file);
-                        } else {
-                            callback(null);
-                        }
+                        logError(error);
+                        callback(null, options.outputErrorFiles ? file : undefined);
                     } else {
-                        // 存到缓存
-                        cache && cache.set(file, copy);
-                        callback(null, copy);
+                        callback(null, result);
                     }
                 });
             } else {
+                logError(file.path + '不是png或jpg图片.');
                 callback(null, file);
             }
         }
     });
 };
 
+/**
+ * 提取文件，如果缓存中存在，那么从缓存里面提取，否则去服务器压缩
+ * @param {VinylFile} file 等待压缩的文件
+ * @param {Function} callback 回调
+ */
+function extract(file, callback) {
+    // 先从缓存中取
+    if (cache && cache.has(file)) {
+        const result = cache.get(file);
+        return callback(null, result);
+    }
+    // 压缩文件
+    compress(file, function(error, result) {
+        if (error) {
+            callback(file.path + '压缩文件失败.');
+        } else {
+            // 存到缓存
+            cache && cache.set(file, result);
+            callback(null, result);
+        }
+    });
+}
+
+/**
+ * 去tinypng压缩文件
+ * @param {VinylFile} file 等待压缩的文件
+ * @param {Function} callback 回调
+ */
 function compress(file, callback) {
     request({
         url: 'https://tinypng.com/web/shrink',
@@ -100,7 +118,7 @@ function compress(file, callback) {
             }).catch(callback);
             return;
         } else {
-            return callback(new TypeError('未获取到压缩后的下载URL.'));
+            return callback('未获取到压缩后的下载URL.');
         }
     });
 }
